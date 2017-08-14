@@ -1,6 +1,6 @@
 # HTor project for infocom2018
 
-### (A demo will be uploaded before 8/13)
+### (The instructions for running demo will be uploaded before 8/15)
 
 ### HTor is designed for unlinkable communication online. Most tools online fail to achieve this goal against surveillance. HTor achieve this goal against greastest global adversaries.
 
