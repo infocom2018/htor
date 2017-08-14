@@ -20,7 +20,7 @@
 
 - [x] a neural network model code
 
-- [x] a htor demo online comprising a server and a browser plugin
+- [x] a htor demo online comprising a server and a demo client script with GUI
 
 
 ### Run the demo code to experience HTor!
