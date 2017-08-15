@@ -372,7 +372,7 @@ class WidgetsDemo:
             print ('message send failed! : %s' % id_list[0])
             return 1
         else:
-            self.text.insert(END, 'Sent request containing message %s successfully to %s!\n' % (send_msg.rsplit('.', 1)[0], htor_website)
+            self.text.insert(END, 'Sent request containing message %s successfully to %s!\n' % (send_msg.rsplit('.', 1)[0], htor_website))
 
         my_flags = []
         my_msgs = []
