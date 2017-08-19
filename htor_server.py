@@ -1,9 +1,18 @@
 #!/usr/bin/env python
 #
-# Created for HTor project
-# basic ideas are stated in submitted 2018 infoCom paper:
-#       Link Us If You Can: Enabling Unlinkable Communication on the Internet
-# For anonymity of this project, more details will be stated later.
+# Copyright 2009 Facebook
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
 
 import bcrypt
 import concurrent.futures
@@ -29,48 +38,50 @@ from urllib import url2pathname, pathname2url
 #   pathname2url:  to the form used in the path component of a URL. This does not produce a complete URL
 from tornado.options import define, options
 
-define("port", default=8888, help="run on the given port", type=int)
+define("port", default=80, help="run on the given port", type=int)
 define("mysql_host", default="127.0.0.1:3306", help="blog database host")
 define("mysql_database", default="blog", help="blog database name")
 define("mysql_user", default="root", help="blog database user")
 define("mysql_password", default="123456", help="blog database password")
 
 MIN_COMMENTS = 20
-
+visitor_name = 'visitor'
+visitor_uid = 1
 # A thread pool to be used for password hashing with bcrypt.
 executor = concurrent.futures.ThreadPoolExecutor(2)
 
 
 class Application(tornado.web.Application):
-    def __init__(self):
-        handlers = [
-            (r"/", HomeHandler),
-            (r"/archive", ArchiveHandler),
-            # (r"/get/comments/([^/]+)", CommentsHandler),
-            (r"/feed", FeedHandler),
-            (r"/entry/([^/]+)", EntryHandler),
-            (r"/compose", ComposeHandler),
-            (r"/auth/create", AuthCreateHandler),
-            (r"/auth/login", AuthLoginHandler),
-            (r"/auth/logout", AuthLogoutHandler),
-        ]
-        settings = dict(
-            blog_title=u"Tornado Blog",
-            template_path=os.path.join(os.path.dirname(__file__), "templates"),
-            static_path=os.path.join(os.path.dirname(__file__), "static"),
-            ui_modules={"Entry": EntryModule},
-            xsrf_cookies=True,
-            cookie_secret="__TODO:_GENERATE_YOUR_OWN_RANDOM_VALUE_HERE__",
-            login_url="/auth/login",
-            debug=True,
-        )
-        super(Application, self).__init__(handlers, **settings)
-        # Have one global connection to the blog DB across all handlers
-        self.db = torndb.Connection(
-            host=options.mysql_host, database=options.mysql_database,
-            user=options.mysql_user, password=options.mysql_password)
+    if __name__ == '__main__':
+        def __init__(self):
+            handlers = [
+                (r"/", HomeHandler),
+                (r"/archive", ArchiveHandler),
+                # (r"/get/comments/([^/]+)", CommentsHandler),
+                (r"/feed", FeedHandler),
+                (r"/entry/([^/]+)", EntryHandler),
+                (r"/compose", ComposeHandler),
+                (r"/auth/create", AuthCreateHandler),
+                (r"/auth/login", AuthLoginHandler),
+                (r"/auth/logout", AuthLogoutHandler),
+            ]
+            settings = dict(
+                blog_title=u"Tornado Blog",
+                template_path=os.path.join(os.path.dirname(__file__), "templates"),
+                static_path=os.path.join(os.path.dirname(__file__), "static"),
+                ui_modules={"Entry": EntryModule},
+                xsrf_cookies=True,
+                cookie_secret="__TODO:_GENERATE_YOUR_OWN_RANDOM_VALUE_HERE__",
+                login_url="/auth/login",
+                debug=True,
+            )
+            super(Application, self).__init__(handlers, **settings)
+            # Have one global connection to the blog DB across all handlers
+            self.db = torndb.Connection(
+                host=options.mysql_host, database=options.mysql_database,
+                user=options.mysql_user, password=options.mysql_password)
 
-        self.maybe_create_tables()
+            self.maybe_create_tables()
 
     def maybe_create_tables(self):
         try:
@@ -119,155 +130,173 @@ class EntryHandler(BaseHandler):
         else:
             return False
 
-    def random_reply(self, reply, slug):
+    def get_visitor(self):
+        #  check visitor exists or not. If not, create it
+        v_exist = self.db.query("SELECT * FROM authors WHERE name = 'visitor'")
+        if len(v_exist) == 0:
+            #   create 'visitor' user for visitors
+            spr = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(50))
+            spub = str(seccure.passphrase_to_pubkey(spr))
+            spub = pathname2url(spub)
+            self.db.execute(
+                "INSERT INTO authors (name, uid, ip, spr)"
+                "VALUES (%s, %s, %s, %s)",
+                visitor_name, visitor_uid, '0.0.0.0', spr)
+            return spub
+        else:
+            visitor = v_exist[0]
+            visitor_spub = pathname2url(str(seccure.passphrase_to_pubkey(str(visitor['spr']))))
+            return visitor_spub
+
+    def random_reply(self, reply, slug, uid, spub):
+        MAX_comments = MIN_COMMENTS
+        other_messages_count = self.db.get("SELECT COUNT(*) FROM other_messages")['COUNT(*)'] - MIN_COMMENTS - 1
+        comments_count = self.db.get("SELECT COUNT(*) FROM comments")['COUNT(*)'] - MIN_COMMENTS - 1
         entry = self.db.get("SELECT * FROM entries WHERE slug = %s", slug)
         if not entry:
-            entry = self.db.get("SELECT * FROM entries WHERE id = %s", 1)
+            entry = self.db.get("SELECT * FROM entries WHERE id = %s", random.randint(1,12))
         entry['pub_success'] = reply
+        entry['uid'] = uid
+        entry['spub'] = spub
+        entry['msgs'] = self.db.query("SELECT * FROM other_messages WHERE id > %s LIMIT %s " % (int(uid) % other_messages_count, str(MAX_comments)))
+        # entry['msgs'] = msgs
+        comm = self.db.query("SELECT * FROM comments WHERE id > %s ORDER BY published LIMIT %s" % (int(uid) % comments_count, str(MAX_comments)))
+        entry['comments'] = comm
         self.render("entry.html", entry=entry)
 
-    def reply_all_messages(self, reply, slug, htor_user):
+    def reply_all_messages(self, reply, slug, htor_user, uid, spub):
         MAX_comments = MIN_COMMENTS
+        other_messages_count = self.db.get("SELECT COUNT(*) FROM other_messages")['COUNT(*)'] - MIN_COMMENTS - 1
+        comments_count = self.db.get("SELECT COUNT(*) FROM comments")['COUNT(*)'] - MIN_COMMENTS - 1
         entry = self.db.get("SELECT * FROM entries WHERE slug = %s", slug)
         if not entry:
-            entry = self.db.get("SELECT * FROM entries WHERE id = %s", 1)
+            entry = self.db.get("SELECT * FROM entries WHERE id = %s", random.randint(1,12))
         entry['pub_success'] = reply
+        entry['uid'] = uid
+        entry['spub'] = spub
         msgs = self.db.query("SELECT * FROM messages WHERE team_id = %s AND id > %s",
                              htor_user['uid'], htor_user['last_message_id'])
-        print ("reply_all_messages~")
+        # print ("reply all messages~")
         if len(msgs) > 0:
             self.db.execute(
                 "UPDATE authors SET last_message_id = %s"
                 "WHERE id = %s", str(msgs[len(msgs)-1]['id']), htor_user['id'])
         MAX_comments = MAX_comments if len(msgs) < MAX_comments else len(msgs)
-        other_msgs = self.db.query("SELECT * FROM other_messages LIMIT %s" % str(MAX_comments - len(msgs)))
+        other_msgs = self.db.query("SELECT * FROM other_messages WHERE id > %s LIMIT %s" % (int(uid) % other_messages_count, str(MAX_comments - len(msgs))))
         entry['msgs'] = msgs + other_msgs
         # entry['msgs'] = msgs
-        comm = self.db.query("SELECT * FROM comments ORDER BY published LIMIT %s" % str(MAX_comments))
+        comm = self.db.query("SELECT * FROM comments WHERE id > %s ORDER BY published LIMIT %s" % (int(uid) % comments_count, str(MAX_comments)))
         entry['comments'] = comm
         # entry['username'] = str(htor_user['name'])
         # entry['pub'] = pathname2url(htor_user['pub'])
         self.render("entry.html", entry=entry)
 
-    # def reply_other_messages(self, reply, slug, htor_user):
-    #     #   TODO: when run with many users, comments must be more than 200
-    #     MAX_comments = MIN_COMMENTS
-    #     entry = self.db.get("SELECT * FROM entries WHERE slug = %s", slug)
-    #     if not entry:
-    #         entry = self.db.get("SELECT * FROM entries WHERE id = %s", 1)
-    #     entry['pub_success'] = reply
-    #
-    #     other_msgs = self.db.query("SELECT * FROM other_messages LIMIT %s" % str(MAX_comments))
-    #     entry['msgs'] = other_msgs
-    #     comm = self.db.query("SELECT * FROM comments ORDER BY published LIMIT %s" % str(MAX_comments))
-    #     entry['comments'] = comm
-    #     self.render("entry.html", entry=entry)
 
     def get(self, slug):
-        # cc_user = self.get_current_user()
-        # check if htor
-        # self.set_cookie('_ga', 'GA1.1.779844033.1485068018')
-        # self.set_cookie('user_name', 'ggggg')
-        # self.set_cookie('user_auth', '%25%21Z%2CgV6y%7B%28f9JvbW%3F%7B%234BPCf7WdxJIgr2%3F%7CE%29i%3C%23cdCkA%23%7Bl%23t')
-        # self.set_cookie('user_info', '%00%BB%1F%28%E1%21%1Ee%FD%21%84%C4%FBi%BE%C4%3AX%3F%C2E%9Am%D2Y%82%A06hL%8E%B6%C8%05%D8%23%000%40%1E%5B%84n%02%89%A0x%FE%CC%B6%09%CC%12%FF%A6%B1yb%E1%10%DB%8F%DAib%7C%7E%A8%2C%8Cb%2A%AA%FCuw%A6hRs%87%3D%A4%EC%C2%A7%E0%96%90H%22%BF%AFT%B3%BB%BB%05%A7%23%1B%A8x%3Ew%B5y%16U%11%1C%EB%C5t%5E%EF%0FU%BA%1E%94%09Pj%F2%7Ef%F8%F1%E6C%10M2%2B%B4v%9E%B2%13R%D7-%9E%05%B4%C3%5By%C8%11%02%B1%F0M%3C1%3C%81%A6%7Fd%EBl%958%A8%04%C4')
-        # self.set_cookie('user_info1', '%014q%BC%C1%05Rd%E8%06%F2%A1%098%7C%0A%8226%5Cl%A4%B1%B1%CBQJ%40%F6yZ%0A%F2%C1luz%C6%17%23%AC%A7%A5%A3%0D%F5%F5%EApA%B9%09%3E%98%AC%15%06%F7%C0%91pIT%C7R%23%3F%91%B1%5B%CD%A0%F1%87P%EB%1B%E1%27%CE%2C%D5B%CCJ%7E%07D%1E6%96%F7%CFYs%A5%82s%D5%5C%EB%EA%171%88%8B%83%85%16i%C2%D1%1B%3F%8D%D6%CB%29F%DB%5C%CC%DC%13z3%81d%A6%CF%E4%DA%F0%B9%F1%7Dxv%17%FB%85%AB%90%0D%95%A9%A3%0BS%C8%ECI%1A%D0%22%017%990%1F7%C1K2%12%F2d%A6%9B')
         cookies = self.cookies
         #   request start time: self.request[' _start_time']
         #   decode send_time and compare to self.request[' _start_time']
         #   create 'last_sent_time' in table authors to limit htor user send frequency.
         if '_ga' not in cookies:
-            self.random_reply('bad', slug)
+            #   a new user
+            # ttt = self.current_user.pub
+            # tttt = pathname2url(self.current_user.pub)
+            # self.current_user['encoded_pub'] = pathname2url(self.current_user.pub)
+            visitor_spub = self.get_visitor()
+            self.random_reply('bad', slug, visitor_uid, visitor_spub)
         if 'user_auth' not in cookies:
             uniqueId = cookies['_ga'].value.split('.')[2]
             exist = self.db.query("SELECT * FROM authors WHERE uid = %s", uniqueId)
             spr = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(50))
             spub = str(seccure.passphrase_to_pubkey(spr))
             spub = pathname2url(spub)
-            if not exist:
+            #   1-100 is reserved
+            if not exist and int(uniqueId) > 100:
                 self.db.execute(
                     "INSERT INTO authors (uid, ip, spr)"
                     "VALUES (%s, %s, %s)",
                     uniqueId, self.request.remote_ip, spr)
-                self.random_reply(spub, slug)
+                self.random_reply(spub, slug, uniqueId, spub)
             else:
-                self.random_reply('bad', slug)
-            b = 1
+                self.random_reply('bad', slug, uniqueId, spub)
         else:
             # if user_auth exists, then user_info exists
             ga_cookie = cookies['_ga'].value.split('.')
             uniqueId = ga_cookie[2]
             msg_sent_time = ga_cookie[3]
             request_usr = self.db.query("SELECT * FROM authors WHERE uid = %s", uniqueId)[0]
-            if not request_usr['pub']:
-                # start registration completion. process user register info
-                user_rinfo = url2pathname(cookies['user_info'].value)
-                user_rinfo = seccure.decrypt(user_rinfo, str(request_usr['spr']))
-                user_rinfo = user_rinfo.split(' ', 1)
-                # hashed_pw = hashlib.sha224(user_rinfo[1]).hexdigest()
-                self.db.execute("UPDATE authors SET last_message_id = %s, pub = %s \
-                                WHERE uid = %s", 0, user_rinfo[1], user_rinfo[0])
-                self.random_reply(user_rinfo[0], slug)
-            else:
-                # ready to receive a HTor message
-                user_auth = url2pathname(cookies['user_auth'].value)
-                secret = seccure.verify(msg_sent_time, user_auth, str(request_usr['pub']))
-                print (secret)
-                if not secret:
-                    self.random_reply('wrong_auth_info', slug)
-                    return
-                # authentication received
-                # check if update pub.
-                if 'user_pass' in cookies:
-                    # temp_new_pub = cookies['user_pass'].value
-                    # user_new_pub = self.decapsulate(temp_new_pub)
-                    user_new_pub = url2pathname(cookies['user_pass'].value)
-                    # user_new_pub = temp_new_pub
-                    # if temp_new_pub.find('eee') >= 0 or temp_new_pub.find('sss') >= 0:
-                    #     user_new_pub = self.deManipulate(temp_new_pub)
-                    try:
-                        user_new_pub = seccure.decrypt(user_new_pub, str(request_usr['pub']))
-                        self.db.execute(
-                            "UPDATE authors SET pub = %s"
-                            "WHERE id = %s", user_new_pub, request_usr['id'])
-                        # print ('pub update success!')
-                        # print ('user_new_pub:' + user_new_pub)
-                        # print ('temp_new_pub:' + temp_new_pub)
-                        # print ('cookie value:' + cookies['user_pass'].value)
-                    except:
-                        print ('pub update fail, username %s' % request_usr['name'])
-                        # print ('user_new_pub:' + user_new_pub)
-                        # print ('temp_new_pub:' + temp_new_pub)
-                        # print ('cookie value:' + cookies['user_pass'].value)
+            spub = pathname2url(str(seccure.passphrase_to_pubkey(str(request_usr['spr']))))
+            try:
+                if not request_usr['pub']:
+                    # start registration completion. process user register info
+                    user_rinfo = url2pathname(cookies['user_info'].value)
+                    user_rinfo = seccure.decrypt(user_rinfo, str(request_usr['spr']))
+                    user_rinfo = user_rinfo.split(' ', 1)
+                    # hashed_pw = hashlib.sha224(user_rinfo[1]).hexdigest()
+                    self.db.execute("UPDATE authors SET last_message_id = %s, pub = %s \
+                                    WHERE uid = %s", 0, user_rinfo[1], user_rinfo[0])
+                    self.random_reply(user_rinfo[0], slug, uniqueId, spub)
+                else:
+                    # ready to receive a HTor message
+                    user_auth = url2pathname(cookies['user_auth'].value)
+                    secret = seccure.verify(msg_sent_time, user_auth, str(request_usr['pub']))
+                    print (secret)
+                    if not secret:
+                        self.random_reply('wrong_auth_info', slug, uniqueId, spub)
                         return
-                # get message from user_info* and store to table
-                inprocess = self.not_finished(cookies, 0)
-                count = 0
-                while inprocess:
-                    # try:
-                    user_info = url2pathname(cookies[inprocess].value)
-                    user_info = seccure.decrypt(user_info, str(request_usr['spr']))
-                    sp = user_info.split(' ', 2)
-                    # print (len(sp))
-                    # message mode, user_id + sign + $E_b_pub(A_pub, message, E_a_pr(H(message)), GMT time)
-                    user_id = sp[0]
-                    symbol = sp[1]
-                    en_message = sp[2]
-                    #   X use receiver's pub to encrypt en_message/ second is encrypted, no need to encrypt again
-                    # receiver_pub = self.db.query("SELECT pub FROM authors WHERE uid = %s", user_id)
-                    # en_message = pathname2url(seccure.encrypt(en_message, str(receiver_pub[0]['pub'])))
+                    # authentication received
+                    # check if update pub.
+                    if 'user_pass' in cookies:
+                        # temp_new_pub = cookies['user_pass'].value
+                        # user_new_pub = self.decapsulate(temp_new_pub)
+                        user_new_pub = url2pathname(cookies['user_pass'].value)
+                        # user_new_pub = temp_new_pub
+                        # if temp_new_pub.find('eee') >= 0 or temp_new_pub.find('sss') >= 0:
+                        #     user_new_pub = self.deManipulate(temp_new_pub)
+                        try:
+                            user_new_pub = seccure.decrypt(user_new_pub, str(request_usr['pub']))
+                            self.db.execute(
+                                "UPDATE authors SET pub = %s"
+                                "WHERE id = %s", user_new_pub, request_usr['id'])
+                            # print ('pub update success!')
+                            # print ('user_new_pub:' + user_new_pub)
+                            # print ('temp_new_pub:' + temp_new_pub)
+                            # print ('cookie value:' + cookies['user_pass'].value)
+                        except:
+                            print ('pub update fail, username %s' % request_usr['name'])
+                            # print ('user_new_pub:' + user_new_pub)
+                            # print ('temp_new_pub:' + temp_new_pub)
+                            # print ('cookie value:' + cookies['user_pass'].value)
+                            return
+                    # get message from user_info* and store to table
+                    inprocess = self.not_finished(cookies, 0)
+                    count = 0
+                    while inprocess:
+                        # try:
+                        user_info = url2pathname(cookies[inprocess].value)
+                        user_info = seccure.decrypt(user_info, str(request_usr['spr']))
+                        sp = user_info.split(' ', 2)
+                        # print (len(sp))
+                        # message mode, user_id + sign + $E_b_pub(A_pub, message, E_a_pr(H(message)), GMT time)
+                        user_id = sp[0]
+                        symbol = sp[1]
+                        en_message = sp[2]
+                        #   X use receiver's pub to encrypt en_message/ second is encrypted, no need to encrypt again
+                        # receiver_pub = self.db.query("SELECT pub FROM authors WHERE uid = %s", user_id)
+                        # en_message = pathname2url(seccure.encrypt(en_message, str(receiver_pub[0]['pub'])))
 
-                    # print en_message
-                    self.db.execute(
-                        "INSERT INTO messages (team_id, first_m, second_m)"
-                        "VALUES (%s, %s, %s)",
-                        user_id, symbol, en_message)
-                    print ('success')
-                    # except:
-                    #     self.reply_all_messages('message_success_%s'%count, slug, htor_user)
-                    count += 1
-                    inprocess = self.not_finished(cookies, count)
+                        # print en_message
+                        self.db.execute(
+                            "INSERT INTO messages (team_id, first_m, second_m)"
+                            "VALUES (%s, %s, %s)",
+                            user_id, symbol, en_message)
+                        print ('success')
+                        count += 1
+                        inprocess = self.not_finished(cookies, count)
 
-                self.reply_all_messages('message_success', slug, request_usr)
+                    self.reply_all_messages('message_success', slug, request_usr, uniqueId, spub)
+            except:
+                self.random_reply('bad', slug, uniqueId, spub)
 
 
 class CommentsHandler(BaseHandler):
@@ -360,7 +389,7 @@ class AuthLoginHandler(BaseHandler):
 
     @gen.coroutine
     def post(self):
-        author = self.db.get("SELECT * FROM authors WHERE email = %s",
+        author = self.db.get("SELECT * FROM authors WHERE name = %s",
                              self.get_argument("email"))
         if not author:
             self.render("login.html", error="email not found")
@@ -396,3 +425,12 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# CREATE TABLE messages
+# (
+#     id INT(11) PRIMARY KEY NOT NULL AUTO_INCREMENT,
+#     team_id INT(11) NOT NULL,
+#     first_m VARCHAR(100) NOT NULL,
+#     second_m VARCHAR(600) NOT NULL,
+#     third_m VARCHAR(100) NOT NULL
+# );

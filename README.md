@@ -1,6 +1,6 @@
 # HTor project for infocom2018
 
-### (The instructions for running demo will be uploaded before 8/18. A plugin for chrome browser is under construction.)
+### (The instructions for starting HTor demo is presented in file ‘HTor_HOWTO.pdf’. A plugin for chrome browser is under construction.)
 
 ### HTor is designed for unlinkable communication online. Most tools online fail to achieve this goal against surveillance. HTor achieve this goal against greastest global adversaries.
 
@@ -25,4 +25,4 @@
 
 ### Run the demo code to experience HTor!
 
-To run the demo client code, Follow the instructions below
+To run the demo client code, please download file ‘simple_client.py’ and follow the instructions stated in file ‘HTor_HOWTO.pdf’. If you have questions about HTor, please contact infocom2018anonymous@gmail.com.

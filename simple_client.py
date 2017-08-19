@@ -19,7 +19,7 @@ import os
 
 
 normal_ids = ['body', 'header', 'content', 'date']
-htor_website = "http://htor.tech/entry/haha-booy"
+htor_website = "http://htor.tech/entry/hello-htor"
 identity_file = 'htor'
 folder = identity_file + '_friend/'
 
